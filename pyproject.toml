@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "python3"
+version = "0.1.0"
+description = ""
+authors = ["usulmund <yakovleva.a12@yandex.ru>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+bidict = "^0.22.1"
+aioconsole = "^0.6.2"
+aiofiles = "^23.2.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
