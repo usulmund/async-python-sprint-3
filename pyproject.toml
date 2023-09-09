@@ -7,10 +7,13 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-bidict = "^0.22.1"
 aioconsole = "^0.6.2"
 aiofiles = "^23.2.1"
+pydantic = "==1.*"
 
+[[tool.mypy.overrides]]
+module = "aioconsole"
+ignore_missing_imports = true
 
 [build-system]
 requires = ["poetry-core"]
