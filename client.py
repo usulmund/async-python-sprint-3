@@ -16,7 +16,7 @@ class Client:
         self.__port = port
         self.__is_server_work = True
 
-    async def open_chat(self):
+    async def open_chat(self) -> None:
         """
         Корутина для подключения к серверу.
         Ожижает завершение конкуретных корутин по отправке и чтению сообщений.
@@ -27,7 +27,7 @@ class Client:
         )
         await asyncio.gather(self.read_message(), self.send_message())
 
-    async def read_message(self):
+    async def read_message(self) -> None:
         """
         Корутина для чтения сообщений.
         Работает до тех пор, пока не будет получено сообщение
@@ -45,7 +45,7 @@ class Client:
             except Exception as e:
                 print('read message error ', e)
 
-    async def send_message(self):
+    async def send_message(self) -> None:
         """
         Корутина для отправки сообщений.
         В случае отправки сообщения exit или отключения сервера

@@ -7,7 +7,15 @@ from pydantic import BaseSettings
 
 class ChatSettings(BaseSettings):
 
-    DATE_TIME_DELIMITER: str = ' % '
+    HOST: str = '127.0.0.1'
+    PORT: int = 8000
+    BACK_UP_SIZE: int = 20
+    BAN_TIME: int = 4
+    MSG_TTL: int = 1
+    MAX_MSG_PER_PERIOD: int = 20
+    MSG_PERIOD: int = 1
+
+    DATE_DELIMITER: str = ' % '
     PRIVATE_MESSAGE_SIGN: str = '>>'
     EXIT_SIGN: str = '~~'
     DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
@@ -23,12 +31,6 @@ class ChatSettings(BaseSettings):
         '*\t/ban <username> -- complain about some user\n\n' \
         'Enter "/exit" to out from chat\n' \
         '_______________________________________________________\n'
-    COMMANDS: list[str] = [
-        '/rules',
-        '/status',
-        # '/ban'
-        '/exit',
-    ]
     EMOJI: dict[str, str] = {
         'login': '(^o^)',
         'ban': '(!_!)',

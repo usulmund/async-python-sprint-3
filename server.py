@@ -1,8 +1,6 @@
 """
 Модуль с описанием класса Server и самим запуском сервера.
 """
-import logging
-import sys
 import asyncio
 from asyncio.streams import StreamReader, StreamWriter
 from datetime import datetime, timedelta
@@ -20,21 +18,9 @@ from data_keeper import (
     user_ban,
 )
 from base_settings import ChatSettings
-
-
+from logger_description import logger
+from utils import Commands
 chat_settings = ChatSettings()
-DATE_TIME_DELIMITER = chat_settings.DATE_TIME_DELIMITER
-PRIVATE_MESSAGE_SIGN = chat_settings.PRIVATE_MESSAGE_SIGN
-EXIT_SIGN = chat_settings.EXIT_SIGN
-DATE_FORMAT = chat_settings.DATE_FORMAT
-BACK_UP_FILE = chat_settings.BACK_UP_FILE
-RULES = chat_settings.RULES
-COMMANDS = chat_settings.COMMANDS
-EMOJI = chat_settings.EMOJI
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-logger.addHandler(logging.StreamHandler(stream=sys.stdout))
 
 
 def delete_from_members(writer):
@@ -72,13 +58,13 @@ class Server:
     """
 
     def __init__(self,
-                 host: str = "127.0.0.1",
-                 port: int = 8000,
-                 back_up_size: int = 20,
-                 ban_time: int = 4,
-                 msg_ttl: int = 1,
-                 max_msg_per_period: int = 20,
-                 msg_period: int = 1):
+                 host: str = chat_settings.HOST,
+                 port: int = chat_settings.PORT,
+                 back_up_size: int = chat_settings.BACK_UP_SIZE,
+                 ban_time: int = chat_settings.BAN_TIME,
+                 msg_ttl: int = chat_settings.MSG_TTL,
+                 max_msg_per_period: int = chat_settings.MAX_MSG_PER_PERIOD,
+                 msg_period: int = chat_settings.MSG_PERIOD):
 
         self.__host = host
         self.__port = port
@@ -88,7 +74,19 @@ class Server:
         self.__max_msg_per_period = max_msg_per_period
         self.__msg_period = msg_period * 3600
 
-    async def listen(self):
+        self.__max_cnt_of_complaints = 3
+        self.__date_delimiter = chat_settings.DATE_DELIMITER
+        self.__private_message_sign = chat_settings.PRIVATE_MESSAGE_SIGN
+        self.__exit_sign = chat_settings.EXIT_SIGN
+        self.__date_fmt = chat_settings.DATE_FORMAT
+        self.__rules = chat_settings.RULES
+        self.__emoji = chat_settings.EMOJI
+
+        self.__cmds: list[str] = [command.value for command in Commands]
+
+        self.back_up_file = chat_settings.BACK_UP_FILE
+
+    async def listen(self) -> None:
         """
         Корутина, запускающая сервер
         в режиме вечной обработки.
@@ -98,7 +96,8 @@ class Server:
         async with server:
             await server.serve_forever()
 
-    async def handler(self, reader: StreamReader, writer: StreamWriter):
+    async def handler(self, reader: StreamReader,
+                      writer: StreamWriter) -> None:
         """
         Корутина, перехватывающая соединения.
         Производит авторизацию пользователя
@@ -125,7 +124,7 @@ class Server:
             logger.info('Client error while run: ConnectionResetError')
 
     async def authorization(self, writer: StreamWriter,
-                            reader: StreamReader):
+                            reader: StreamReader) -> tuple[str, bool]:
         """
         Корутина для авторизации пользователя.
         Запрашивает логин и пароль.
@@ -136,36 +135,30 @@ class Server:
         соединение с клиентом.
         """
         num_of_try = 0
-        is_registation_succesfull = False
         logger.debug(user_password)
-        while not is_registation_succesfull:
+        while True:
             username, password = await self.get_username_and_password(
                 writer,
                 reader
             )
-
-            if user_password.get(username) is None:
-                is_user_exist = False
-            else:
-                is_user_exist = True
+            is_user_exist = bool(user_password.get(username))
 
             true_password = user_password.get(username, password)
             logger.info(true_password)
 
             if true_password == password:
-                is_registation_succesfull = True
                 await self.accept_user(username, password, writer)
                 logger.debug(user_password)
                 return username, is_user_exist
             else:
-                fail_emj = EMOJI['fail']
+                fail_emj = self.__emoji['fail']
                 fail_message = f'{fail_emj} Wrong password. Try again.\n'
                 writer.write(fail_message.encode())
                 await writer.drain()
                 num_of_try += 1
 
             if num_of_try > 3:
-                error_emj = EMOJI['error']
+                error_emj = self.__emoji['error']
                 error_message = f'{error_emj} You spent all tries {error_emj}'
                 writer.write(error_message.encode())
                 await writer.drain()
@@ -175,12 +168,12 @@ class Server:
                 return 'login_error', False
 
     async def accept_user(self, username: str, password: str,
-                          writer: StreamWriter):
+                          writer: StreamWriter) -> None:
         """
         Корутина, добавляющая информацию о пользователе,
         делающая его полноправным участником чата.
         """
-        success_emj = EMOJI['success']
+        success_emj = self.__emoji['success']
         welcome_message = f'\n{success_emj} Welcome to chat, {username}!\n'
         writer.write(welcome_message.encode())
         await writer.drain()
@@ -194,13 +187,13 @@ class Server:
         writer_user[writer] = username
 
     async def start_serving(self, is_user_exist: bool, writer: StreamWriter,
-                            reader: StreamReader, address: tuple):
+                            reader: StreamReader, address: tuple) -> None:
         """
         Корутина для начала взаимодействия с сервером.
         Выводит бэк-ап и запускает клиента в общий чат.
         """
         if not is_user_exist:
-            writer.write(RULES.encode())
+            writer.write(self.__rules.encode())
             await writer.drain()
         try:
             await self.restore_back_up(
@@ -214,14 +207,15 @@ class Server:
         except Exception as e:
             logger.error(f'chat_error {e}')
 
-    async def get_username_and_password(self, writer: StreamWriter,
-                                        reader: StreamReader):
+    async def get_username_and_password(
+            self, writer: StreamWriter,
+            reader: StreamReader) -> tuple[str, str]:
         """
         Корутина, запрашивающая у пользователя логин и пароль
         с учетом, что логин должен является одним словом.
         """
 
-        login_emj = EMOJI['login']
+        login_emj = self.__emoji['login']
         is_username_correct = False
         while not is_username_correct:
             username_message = f'{login_emj} Enter username: '
@@ -230,10 +224,10 @@ class Server:
 
             username_bytes = await reader.read(1024)
             username = username_bytes.decode().strip()
-            if len(username.split(' ')) == 1:
+            if username.strip().find(' ') == -1:
                 is_username_correct = True
             else:
-                err_emj = EMOJI['error']
+                err_emj = self.__emoji['error']
                 username_message = f'{err_emj} Use only one word\n'
                 writer.write(username_message.encode())
                 await writer.drain()
@@ -247,7 +241,7 @@ class Server:
         return username, password
 
     async def restore_back_up(self, writer: StreamWriter,
-                              is_user_exist: bool):
+                              is_user_exist: bool) -> None:
         """
         Корутина для вывода пользователю сообщений из бэк-апа.
         Получает аргументом объект StreamWriter и флаг,
@@ -258,7 +252,7 @@ class Server:
         """
 
         try:
-            async with aiofiles.open(BACK_UP_FILE, 'r') as back_up_file:
+            async with aiofiles.open(self.back_up_file, 'r') as back_up_file:
                 back_up_messages = await back_up_file.readlines()
 
             back_up_messages = [
@@ -273,11 +267,11 @@ class Server:
                     back_up_messages, writer)
 
         except FileNotFoundError:
-            async with aiofiles.open(BACK_UP_FILE, 'w') as _:
+            async with aiofiles.open(self.back_up_file, 'w') as _:
                 logger.info('Back-up file created')
 
     async def restore_messages_for_new_user(self, back_up_messages: list[str],
-                                            writer: StreamWriter):
+                                            writer: StreamWriter) -> None:
         """
         Корутина, выводящая новому пользователю последние
         back_up_size сообщений с учетом времени жизни сообщений.
@@ -286,9 +280,9 @@ class Server:
         cnt_of_messages = len(back_up_messages)
         num_first_message = max(0, cnt_of_messages - self.__back_up_size)
         for msg_num in range(num_first_message, cnt_of_messages):
-            time = back_up_messages[msg_num].split(DATE_TIME_DELIMITER)[0]
-            message = back_up_messages[msg_num].split(DATE_TIME_DELIMITER)[1]
-            format_time = datetime.strptime(time, DATE_FORMAT)
+            time = back_up_messages[msg_num].split(self.__date_delimiter)[0]
+            message = back_up_messages[msg_num].split(self.__date_delimiter)[1]
+            format_time = datetime.strptime(time, self.__date_fmt)
             delta_time = timedelta(seconds=self.__msg_ttl)
             is_not_private = '/private' not in message
             if format_time + delta_time >= datetime.now() and is_not_private:
@@ -297,7 +291,7 @@ class Server:
 
     async def restore_messages_for_existing_user(self,
                                                  back_up_messages: list[str],
-                                                 writer: StreamWriter):
+                                                 writer: StreamWriter) -> None:
         """
         Корутина для восстановления сообщений существующему пользователю
         с момента его выхода из чата.
@@ -310,14 +304,14 @@ class Server:
         num_first_message = 0
         username = writer_user[writer]
         for msg_num in range(cnt_of_messages):
-            if f'{EXIT_SIGN} {username}' in back_up_messages[msg_num]:
+            if f'{self.__exit_sign} {username}' in back_up_messages[msg_num]:
                 num_first_message = msg_num + 1
 
         for msg_num in range(num_first_message, cnt_of_messages):
-            time = back_up_messages[msg_num].split(DATE_TIME_DELIMITER)[0]
-            message = back_up_messages[msg_num].split(DATE_TIME_DELIMITER)[1]
+            time = back_up_messages[msg_num].split(self.__date_delimiter)[0]
+            message = back_up_messages[msg_num].split(self.__date_delimiter)[1]
 
-            if datetime.strptime(time, DATE_FORMAT) + timedelta(
+            if datetime.strptime(time, self.__date_fmt) + timedelta(
                     seconds=self.__msg_ttl) >= datetime.now():
                 if '/private' not in message:
                     writer.write(message.encode())
@@ -338,7 +332,7 @@ class Server:
 
     async def show_back_up_if_recipient(self, writer: StreamWriter,
                                         sender_name: str, recipient_name: str,
-                                        message: str):
+                                        message: str) -> None:
         """
         Корутина для вывода бэк-апа приватных сообщений в случае,
         если пользователем является получателем приватного сообщения.
@@ -348,13 +342,14 @@ class Server:
         """
         username = writer_user[writer]
         if username == recipient_name:
-            private_message = f'{PRIVATE_MESSAGE_SIGN} {sender_name}:\t' \
-                f'{message}\n'
+            private_message = f'{self.__private_message_sign} ' \
+                f'{sender_name}:\t{message}\n'
             writer.write(private_message.encode())
             await writer.drain()
 
-    async def show_back_up_if_sender(self, writer: StreamWriter,
-                                     sender_name: str, message: str):
+    @staticmethod
+    async def show_back_up_if_sender(writer: StreamWriter,
+                                     sender_name: str, message: str) -> None:
         """
         Корутина для вывода бэк-апа приватных сообщений в случае,
         если пользователем является отправителем приватного сообщения.
@@ -367,16 +362,16 @@ class Server:
             writer.write(message.encode())
             await writer.drain()
 
-    async def check_ban(self, username: str, cnt_of_complaints: int):
+    async def check_ban(self, username: str, cnt_of_complaints: int) -> None:
         """
         Корутина для проверки количества жалоб на пользователя
         и блокировки в случае превышения на ban_time часов.
         """
         writers_list = user_writer[username]
 
-        if cnt_of_complaints > 2:
+        if cnt_of_complaints > self.__max_cnt_of_complaints - 1:
             logger.info(f'{username} was baned')
-            ban_emj = EMOJI['ban']
+            ban_emj = self.__emoji['ban']
             ban_message = f'{ban_emj} You was banned for '\
                 f'{self.__ban_time/3600} houres {ban_emj}'
             user_ban[username] = True
@@ -387,7 +382,7 @@ class Server:
             await asyncio.sleep(self.__ban_time)
 
             user_complain[username] = set()
-            info_emj = EMOJI['info']
+            info_emj = self.__emoji['info']
             info_message = f'{info_emj} Your ban ended. Be careful'
             for writer in writers_list:
                 writer.write(info_message.encode())
@@ -396,7 +391,7 @@ class Server:
             user_ban[username] = False
             logger.info(f'{username} free')
 
-    def increase_msg_cnt(self, username):
+    def increase_msg_cnt(self, username) -> int:
         """
         Метод для подсчета количества отправленных сообщений пользователем.
         В случае, если это было его первое сообщение,
@@ -404,10 +399,10 @@ class Server:
         """
         user_msgcnt[username] = user_msgcnt.get(username, 0) + 1
         if user_msgcnt[username] == 1:
-            user_starttime[username] = datetime.now().strftime(DATE_FORMAT)
+            user_starttime[username] = datetime.now()
         return user_msgcnt[username]
 
-    def is_message_over(self, username):
+    def is_message_over(self, username) -> bool:
         """
         Метод для проверки превышения порога
         в max_msg_per_period сообщений.
@@ -417,7 +412,7 @@ class Server:
         else:
             return False
 
-    def is_period_over(self, username):
+    def is_period_over(self, username) -> bool:
         """
         Метод для проверки окончания периода msg_period,
         в течение которого можно отправить max_msg_per_period сообщений.
@@ -427,12 +422,12 @@ class Server:
         if isinstance(start_period, str):
             end_period = datetime.strptime(
                 start_period,
-                DATE_FORMAT) + timedelta(seconds=self.__msg_period)
+                self.__date_fmt) + timedelta(seconds=self.__msg_period)
         else:
             end_period = start_period + timedelta(seconds=self.__msg_period)
         return now_time > end_period
 
-    async def wait_end_of_period(self, username: str):
+    async def wait_end_of_period(self, username: str) -> None:
         """
         Корутина для блокировки пользователя.
         Используется, когда пользователь истратил весь лимит
@@ -448,11 +443,11 @@ class Server:
         if isinstance(start_period, str):
             end_period_time = datetime.strptime(
                 start_period,
-                DATE_FORMAT) + delta_time
+                self.__date_fmt) + delta_time
         else:
             end_period_time = start_period + delta_time
 
-        att_emj = EMOJI['attention']
+        att_emj = self.__emoji['attention']
         att_message = f'{att_emj} You spent all messages. ' \
             f'Wait until {end_period_time}'
         for writer in writers_list:
@@ -474,7 +469,7 @@ class Server:
         logger.info(f'{username} can write messages again')
 
     async def do_chating(self, address: tuple, writer: StreamWriter,
-                         reader: StreamReader):
+                         reader: StreamReader) -> None:
         """
         Корутина, отлавливающая сообщения от пользователя.
         Происходит проверка количества отправленных сообщений
@@ -494,7 +489,7 @@ class Server:
             message = data.decode().strip()
             logger.debug(message)
 
-            is_message_command = message in COMMANDS or '/ban' in message
+            is_message_command = message in self.__cmds or '/ban' in message
             is_user_in_ban = user_ban.get(username, False)
             msg_cnt_per_period = user_msgcnt.get(username, 0)
             if not is_message_command and not is_user_in_ban:
@@ -518,7 +513,7 @@ class Server:
         except Exception as e:
             logger.info(f'conn close: {e}')
 
-    async def check_if_can_write(self, username: str, message: str):
+    async def check_if_can_write(self, username: str, message: str) -> None:
         """
         Корутина для проверки, имеет ли пользователь
         возможность отправлять сообщения.
@@ -527,7 +522,7 @@ class Server:
         В конце периода время и количество сообщений сбрасывается.
         """
         try:
-            if message not in COMMANDS and not self.is_period_over(
+            if message not in self.__cmds and not self.is_period_over(
                     username) and self.is_message_over(username):
                 await self.wait_end_of_period(username)
 
@@ -539,7 +534,8 @@ class Server:
             user_msgcnt[username] = 1
 
     async def choose_message_type(self, username: str, data: bytes,
-                                  address: tuple, writer: StreamWriter):
+                                  address: tuple,
+                                  writer: StreamWriter) -> bool:
         """
         Корутина с разветвлением в зависимости от типа сообщения.
         Запрещает отправлять сообщения забаненому пользователю,
@@ -549,7 +545,7 @@ class Server:
         cnt_of_complaints = len(user_complain.get(username, set()))
         message = data.decode().strip()
         is_chating = True
-        if cnt_of_complaints > 2 and message not in COMMANDS:
+        if cnt_of_complaints > 2 and message not in self.__cmds:
             logger.info(
                 f'banned {username} try to send message: {message}')
 
@@ -562,7 +558,7 @@ class Server:
             await self.show_status(writer)
 
         elif message == '/rules':
-            writer.write(RULES.encode())
+            writer.write(self.__rules.encode())
             await writer.drain()
 
         elif '/private' in message:
@@ -579,7 +575,8 @@ class Server:
             await self.send_all(username, data)
         return is_chating
 
-    async def turn_out_user(self, writer: StreamWriter, username: str):
+    async def turn_out_user(self, writer: StreamWriter,
+                            username: str) -> None:
         """
         Корутина для отключения пользователя от чата.
         Отправляет флаг клиенту и сообщение о выходе
@@ -593,7 +590,7 @@ class Server:
             logger.info(f'client out already: {e}')
         delete_from_members(writer)
 
-    async def show_status(self, writer: StreamWriter):
+    async def show_status(self, writer: StreamWriter) -> None:
         """
         Корутина для вывода состояния чата.
         """
@@ -609,12 +606,13 @@ class Server:
             writer.write(msg.encode())
             await writer.drain()
 
-    async def send_bye_message(self, writer: StreamWriter, username: str):
+    async def send_bye_message(self, writer: StreamWriter,
+                               username: str) -> None:
         """
         Корутина для отправки сообщения о выходе пользователя из чата.
         Сообщение также фиксируется в бэк-апе.
         """
-        bye_message = f'{EXIT_SIGN} {username} left the chat'
+        bye_message = f'{self.__exit_sign} {username} left the chat'
 
         for some_writer in active_writers:
             if some_writer is not writer:
@@ -636,7 +634,7 @@ class Server:
         """
         if intruder_username not in user_password or writer_user[
                 sender_writer] == intruder_username:
-            error_emj = EMOJI['error']
+            error_emj = self.__emoji['error']
             message = f'{error_emj} Ban error: check username'
             sender_writer.write(message.encode())
             await sender_writer.drain()
@@ -650,7 +648,7 @@ class Server:
                 user_complain[intruder_username].add(
                     writer_user[sender_writer])
                 logger.debug(user_complain[intruder_username])
-                att_emj = EMOJI['attention']
+                att_emj = self.__emoji['attention']
                 message = f'{att_emj} Someone complained about you. ' \
                     f'Number of complaints: ' \
                     f'{len(user_complain[intruder_username])}'
@@ -664,7 +662,8 @@ class Server:
 
                 await self.check_ban(intruder_username, cnt_of_complaints)
 
-    async def send_private(self, sender_writer: StreamWriter, data: bytes):
+    async def send_private(self, sender_writer: StreamWriter,
+                           data: bytes) -> None:
         """
         Корутина для отправки приватных сообщений.
         В случае некорректного запроса отправителю
@@ -678,10 +677,10 @@ class Server:
             logger.debug(recipient_name)
             logger.debug(message)
 
-            private_message = f'{PRIVATE_MESSAGE_SIGN} {sender_name}:\t'\
-                f'{message}'
+            private_message = f'{self.__private_message_sign} ' \
+                f'{sender_name}:\t{message}'
 
-            att_emj = EMOJI['attention']
+            att_emj = self.__emoji['attention']
             if recipient_name in user_writer and message != '\n':
                 for writer in user_writer[recipient_name]:
                     writer.write(private_message.encode())
@@ -694,7 +693,7 @@ class Server:
                 await sender_writer.drain()
 
         except IndexError:
-            error_emj = EMOJI['error']
+            error_emj = self.__emoji['error']
             error_message = f'{error_emj} ' \
                 'Incorrect syntax for private message.\n' \
                 'Template: /private <username> <message>\n'
@@ -702,7 +701,7 @@ class Server:
             await sender_writer.drain()
 
     async def send_all(self, sender_name: str,
-                       data: bytes):
+                       data: bytes) -> None:
         """
         Корутина для отправки сообщений в общий чат.
         Для отправителя сообщение выводится с приставкой "you".
@@ -719,21 +718,21 @@ class Server:
                     some_writer.write(data_to_send.encode())
                     await some_writer.drain()
 
-    async def store_message(self, sender_name: str, data: bytes):
+    async def store_message(self, sender_name: str, data: bytes) -> None:
         """
         Корутина для сохранения сообщений в бэк-ап.
         """
-        async with aiofiles.open(BACK_UP_FILE, 'a') as back_up_file:
+        async with aiofiles.open(self.back_up_file, 'a') as back_up_file:
             message_time_datetime = datetime.now()
-            message_time = message_time_datetime.strftime(DATE_FORMAT)
-            back_up_message = f'{message_time}{DATE_TIME_DELIMITER}' \
+            message_time = message_time_datetime.strftime(self.__date_fmt)
+            back_up_message = f'{message_time}{self.__date_delimiter}' \
                 f'{sender_name}:\t{data.decode()}\n'
             await back_up_file.write(back_up_message)
 
 
 if __name__ == '__main__':
     chat_server = Server()
-    with open(BACK_UP_FILE, 'w') as _:
+    with open(chat_server.back_up_file, 'w') as _:
         logger.info('\nBack-up file was cleared')
     try:
         asyncio.run(chat_server.listen())

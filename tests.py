@@ -6,10 +6,14 @@ import unittest
 from multiprocessing import Process
 import asyncio
 import telnetlib
-
-from server import Server, BACK_UP_FILE, logger
 from time import sleep
 
+from server import Server
+from logger_description import logger
+from base_settings import ChatSettings
+
+
+BACK_UP_FILE = ChatSettings().BACK_UP_FILE
 HOST = 'localhost'
 PORT = 8000
 
